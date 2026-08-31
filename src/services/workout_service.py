@@ -38,3 +38,7 @@ class WorkoutService:
         List all registered workout templates.
         """
         return list(self._workouts.values())
+
+
+# Shared singleton instance
+shared_workout_service = WorkoutService()

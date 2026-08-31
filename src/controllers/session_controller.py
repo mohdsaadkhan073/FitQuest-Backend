@@ -12,10 +12,7 @@ from backend.src.schemas import (
     SetProgressSchema,
     WorkoutSessionSchema,
 )
-from backend.src.services import SessionService
-
-# Shared global session service instance
-session_service = SessionService()
+from backend.src.services.session_service import shared_session_service as session_service
 
 
 class SessionController:

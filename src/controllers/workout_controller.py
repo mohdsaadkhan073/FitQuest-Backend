@@ -8,10 +8,7 @@ from fastapi import HTTPException, status
 
 from backend.src.models import ExerciseTarget, Workout
 from backend.src.schemas import CreateWorkoutSchema, WorkoutSchema
-from backend.src.services import WorkoutService
-
-# Shared global service instance
-workout_service = WorkoutService()
+from backend.src.services.workout_service import shared_workout_service as workout_service
 
 
 class WorkoutController:

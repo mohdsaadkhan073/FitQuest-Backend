@@ -108,3 +108,7 @@ class SessionService:
                         break
 
         return session
+
+
+# Shared singleton instance
+shared_session_service = SessionService()
