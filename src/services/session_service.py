@@ -1,7 +1,7 @@
 """
 FitQuest Session Service
 Manages active workout sessions, advances set/exercise progress, calculates incremental scoring,
-persists progress history to MongoDB/in-memory, and processes model ExerciseResult objects.
+persists progress history to MongoDB/in-memory, syncs persistent elder points, and processes model ExerciseResult objects.
 """
 
 from typing import Any, Dict, List, Optional, Union
@@ -9,6 +9,7 @@ from backend.src.models.workout import Workout
 from backend.src.models.workout_session import WorkoutSession
 from backend.src.services.scoring_service import ScoringService
 from backend.src.db.history_repo import history_repo
+from backend.src.db.elder_repo import elder_repo
 
 
 class SessionService:
@@ -20,22 +21,33 @@ class SessionService:
 
     def start_session(self, workout: Workout) -> WorkoutSession:
         """
-        Initialize and register a new active WorkoutSession.
+        Initialize and register a new active WorkoutSession, synced with elder persistent points.
         """
-        session = WorkoutSession(workout=workout)
+        profile = elder_repo.get_profile()
+        session = WorkoutSession(
+            workout=workout,
+            current_points=profile.get("current_points", 0)
+        )
         self._sessions[session.session_id] = session
         return session
 
     def get_session(self, session_id: str) -> Optional[WorkoutSession]:
         """
-        Retrieve session by session_id.
+        Retrieve session by session_id and ensure points are fresh from elder_repo.
         """
-        return self._sessions.get(session_id)
+        session = self._sessions.get(session_id)
+        if session:
+            profile = elder_repo.get_profile()
+            session.current_points = profile.get("current_points", 0)
+        return session
 
     def list_sessions(self) -> List[WorkoutSession]:
         """
-        Return list of all active or stored workout sessions.
+        Return list of all active or stored workout sessions with refreshed points.
         """
+        profile = elder_repo.get_profile()
+        for session in self._sessions.values():
+            session.current_points = profile.get("current_points", 0)
         return list(self._sessions.values())
 
     def switch_exercise(self, session_id: str, exercise_name: str) -> Optional[WorkoutSession]:
@@ -72,7 +84,7 @@ class SessionService:
         result_data: Union[Any, Dict[str, Any]]
     ) -> WorkoutSession:
         """
-        Process an ExerciseResult (or dict) from backend/model and update session progress & points.
+        Process an ExerciseResult (or dict) from backend/model, update persistent points & history.
         """
         session = self.get_session(session_id)
         if not session or session.is_completed:
@@ -119,7 +131,10 @@ class SessionService:
                 
                 # Calculate and accumulate score via ScoringService
                 earned_points = self.scoring_service.calculate_rep_points(active_target, accepted)
-                session.current_points += earned_points
+                
+                # Persist score permanently in ElderRepository (MongoDB)
+                updated_profile = elder_repo.add_points(earned_points)
+                session.current_points = updated_profile.get("current_points", 0)
 
                 # Persist progress into MongoDB / in-memory history
                 history_repo.record_progress(

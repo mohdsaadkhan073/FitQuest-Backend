@@ -5,7 +5,7 @@ Handles persistence of completed exercise reps, sets, and sessions to MongoDB wi
 
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
-from backend.src.db.mongo_client import get_db, is_mongo_connected
+from backend.src.db.mongo_client import get_db
 
 
 class HistoryRepository:
@@ -25,7 +25,7 @@ class HistoryRepository:
         points: int = 0,
         timestamp: Optional[datetime] = None
     ) -> Dict[str, Any]:
-        """Record an exercise milestone into history."""
+        """Record an exercise milestone into persistent history."""
         ts = timestamp or datetime.now(timezone.utc)
         date_str = ts.strftime("%Y-%m-%d")
 
@@ -48,7 +48,7 @@ class HistoryRepository:
         db = get_db()
         if db is not None:
             try:
-                db.workout_history.insert_one({**record})
+                db.workout_history.insert_one(dict(record))
             except Exception as e:
                 print(f"[HistoryRepository] MongoDB insert notice: {e}")
 
@@ -73,19 +73,7 @@ class HistoryRepository:
         """
         records = self.get_all_records()
         if not records:
-            # Provide sample baseline entries if empty so the UI looks stunning immediately
-            today = datetime.now()
-            today_str = today.strftime("%Y-%m-%d")
-            return [
-                {
-                    "date": today_str,
-                    "display_date": f"Today, {today.strftime('%b %d')}",
-                    "total_reps": 0,
-                    "total_points": 0,
-                    "sessions_count": 0,
-                    "exercises": []
-                }
-            ]
+            return []
 
         # Group by date
         grouped: Dict[str, Dict[str, Any]] = {}
@@ -130,7 +118,7 @@ class HistoryRepository:
                 }
 
             entry["exercises_map"][ex_name]["reps"] += r.get("reps", 0)
-            entry["exercises_map"][ex_name]["sets"] += r.get("sets", 1)
+            entry["exercises_map"][ex_name]["sets"] += r.get("sets", 0)
             entry["exercises_map"][ex_name]["points"] += r.get("points", 0)
 
         # Sort dates descending (newest first)
@@ -138,14 +126,16 @@ class HistoryRepository:
         result = []
         for d in sorted_dates:
             item = grouped[d]
-            result.append({
-                "date": item["date"],
-                "display_date": item["display_date"],
-                "total_reps": item["total_reps"],
-                "total_points": item["total_points"],
-                "sessions_count": len(item["sessions"]),
-                "exercises": list(item["exercises_map"].values())
-            })
+            # Only include day if it has at least some activity
+            if item["total_reps"] > 0 or item["total_points"] > 0 or item["exercises_map"]:
+                result.append({
+                    "date": item["date"],
+                    "display_date": item["display_date"],
+                    "total_reps": item["total_reps"],
+                    "total_points": item["total_points"],
+                    "sessions_count": len(item["sessions"]),
+                    "exercises": list(item["exercises_map"].values())
+                })
 
         return result
 

@@ -1,6 +1,6 @@
 """
 FitQuest FastAPI Application Entry Point
-Exposes REST API endpoints for workout management, session progression, model integration, scoring, and progress history.
+Exposes REST API endpoints for workout management, session progression, model integration, scoring, elder profile/points, and progress history.
 """
 
 import os
@@ -23,6 +23,7 @@ from backend.src.db.mongo_client import init_mongo
 from backend.src.routes.session_routes import router as session_router
 from backend.src.routes.stream_routes import router as stream_router
 from backend.src.routes.workout_routes import router as workout_router
+from backend.src.routes.elder_routes import router as elder_router
 from backend.src.schemas import HealthCheckSchema
 
 # Initialize DB connection on startup (with graceful in-memory fallback)
@@ -49,6 +50,7 @@ app.add_middleware(
 app.include_router(workout_router)
 app.include_router(session_router)
 app.include_router(stream_router)
+app.include_router(elder_router)
 
 
 @app.get("/health", response_model=HealthCheckSchema, tags=["Health"])

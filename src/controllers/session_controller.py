@@ -27,23 +27,13 @@ class SessionController:
 
     @staticmethod
     def start_session(payload: CreateSessionSchema) -> WorkoutSessionSchema:
-        """Start a new workout session for a given workout_id."""
-        workout = workout_service.get_workout(payload.workout_id)
+        """Start a new workout session for a given workout_id or current active workout."""
+        workout = None
+        if payload.workout_id:
+            workout = workout_service.get_workout(payload.workout_id)
         if not workout:
-            all_workouts = workout_service.list_workouts()
-            if all_workouts:
-                workout = all_workouts[0]
-            else:
-                workout = workout_service.create_workout(
-                    name="Grandpa's Daily Motivation",
-                    exercises=[
-                        ExerciseTarget(exercise="squat", sets=3, reps_per_set=20, points_per_rep=2),
-                        ExerciseTarget(exercise="pushup", sets=2, reps_per_set=10, points_per_rep=3),
-                        ExerciseTarget(exercise="jumping_jack", sets=2, reps_per_set=15, points_per_rep=2),
-                    ],
-                    target_points=100,
-                    workout_id="default-morning-fitness"
-                )
+            workout = workout_service.get_active_workout()
+
         session = session_service.start_session(workout)
         return WorkoutSessionSchema(**session.to_dict())
 
@@ -52,18 +42,7 @@ class SessionController:
         """Get the most recently active workout session."""
         all_sessions = session_service.list_sessions()
         if not all_sessions:
-            # Auto start default session
-            all_workouts = workout_service.list_workouts()
-            workout = all_workouts[0] if all_workouts else workout_service.create_workout(
-                name="Grandpa's Daily Motivation",
-                exercises=[
-                    ExerciseTarget(exercise="squat", sets=3, reps_per_set=20, points_per_rep=2),
-                    ExerciseTarget(exercise="pushup", sets=2, reps_per_set=10, points_per_rep=3),
-                    ExerciseTarget(exercise="jumping_jack", sets=2, reps_per_set=15, points_per_rep=2),
-                ],
-                target_points=100,
-                workout_id="default-morning-fitness"
-            )
+            workout = workout_service.get_active_workout()
             sess = session_service.start_session(workout)
             return WorkoutSessionSchema(**sess.to_dict())
         return WorkoutSessionSchema(**all_sessions[-1].to_dict())
@@ -95,10 +74,9 @@ class SessionController:
                 session = all_sessions[-1]
                 session_id = session.session_id
             else:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail=f"Workout session with ID '{session_id}' not found."
-                )
+                workout = workout_service.get_active_workout()
+                session = session_service.start_session(workout)
+                session_id = session.session_id
 
         updated_session = session_service.process_exercise_result(session_id, payload.model_dump())
         return WorkoutSessionSchema(**updated_session.to_dict())
