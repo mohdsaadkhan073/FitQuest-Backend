@@ -1,5 +1,6 @@
 """
 Test script for FitQuest real DB history, workout CRUD, elder points persistence, and reset schedules.
+Cleans up temporary test data upon completion so user configurations are never overridden.
 """
 
 import urllib.request
@@ -100,12 +101,15 @@ def run_tests():
     print(f"11. POST /elder/reset-points: status={status}, current_points={reset_res.get('current_points')}")
     assert status == 200 and reset_res["current_points"] == 0
 
-    # Verify Profile after reset
+    # 12. Verify Profile after reset
     status, prof_reset = http_req("/elder/profile")
     print(f"12. Profile After Reset: current_points={prof_reset.get('current_points')}, lifetime_points={prof_reset.get('total_lifetime_points')}")
     assert prof_reset["current_points"] == 0 and prof_reset["total_lifetime_points"] >= 30
 
-    print("\nALL VERIFICATION TESTS PASSED SUCCESSFULLY!")
+    # 13. Clean up test workout so it never pollutes user active workout
+    http_req(f"/workouts/{wid}", method="DELETE")
+
+    print("\nALL VERIFICATION TESTS PASSED SUCCESSFULLY & CLEANED UP!")
 
 
 if __name__ == "__main__":

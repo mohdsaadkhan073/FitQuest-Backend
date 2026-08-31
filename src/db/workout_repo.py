@@ -41,7 +41,7 @@ class WorkoutRepository:
                 if docs:
                     for d in docs:
                         wid = d.get("workout_id")
-                        if wid and wid not in self._in_memory_workouts:
+                        if wid:
                             self._in_memory_workouts[wid] = d
                         if d.get("is_active"):
                             self._active_workout_id = wid
@@ -60,10 +60,26 @@ class WorkoutRepository:
 
     def get_active_workout(self) -> Dict[str, Any]:
         """Get currently active workout plan from RAM (0.001ms)."""
+        # 1. Check if elder_profile specifies active_workout_id
+        from backend.src.db.elder_repo import elder_repo
+        prof = elder_repo.get_profile()
+        target_id = prof.get("active_workout_id")
+        if target_id and target_id in self._in_memory_workouts:
+            self._active_workout_id = target_id
+            return self._in_memory_workouts[target_id]
+
+        # 2. Check if any workout in memory has is_active == True
+        for wid, w in self._in_memory_workouts.items():
+            if w.get("is_active"):
+                self._active_workout_id = wid
+                return w
+
+        # 3. Check self._active_workout_id
         if self._active_workout_id in self._in_memory_workouts:
             return self._in_memory_workouts[self._active_workout_id]
+
         if self._in_memory_workouts:
-            return next(iter(self._in_memory_workouts.values()))
+            return list(self._in_memory_workouts.values())[-1]
         return dict(DEFAULT_WORKOUT_DICT)
 
     def _async_mongo_set_active(self, workout_id: str):
@@ -86,6 +102,14 @@ class WorkoutRepository:
             w["is_active"] = (wid == workout_id)
 
         target["is_active"] = True
+
+        from backend.src.db.elder_repo import elder_repo
+        elder_repo.update_profile(
+            active_workout_id=workout_id,
+            active_workout_name=target.get("name", "Custom Workout"),
+            target_points=target.get("target_points", 100)
+        )
+
         _workout_db_executor.submit(self._async_mongo_set_active, workout_id)
         return target
 
@@ -121,6 +145,13 @@ class WorkoutRepository:
             for w in self._in_memory_workouts.values():
                 w["is_active"] = False
 
+            from backend.src.db.elder_repo import elder_repo
+            elder_repo.update_profile(
+                active_workout_id=wid,
+                active_workout_name=clean_doc["name"],
+                target_points=clean_doc["target_points"]
+            )
+
         self._in_memory_workouts[wid] = dict(clean_doc)
         _workout_db_executor.submit(self._async_mongo_save, dict(clean_doc), clean_doc["is_active"])
         return clean_doc
@@ -141,6 +172,15 @@ class WorkoutRepository:
             existing["is_active"] = bool(update_data["is_active"])
 
         self._in_memory_workouts[workout_id] = dict(existing)
+
+        if existing.get("is_active") or self._active_workout_id == workout_id:
+            from backend.src.db.elder_repo import elder_repo
+            elder_repo.update_profile(
+                active_workout_id=workout_id,
+                active_workout_name=existing.get("name", "Custom Workout"),
+                target_points=existing.get("target_points", 100)
+            )
+
         _workout_db_executor.submit(self._async_mongo_save, dict(existing), existing.get("is_active", False))
         return existing
 
