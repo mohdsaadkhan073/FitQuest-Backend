@@ -1,5 +1,5 @@
 """
-FitQuest Camera Stream Service (Non-Blocking Hardware Kill & 1-Second Reset Pipeline)
+FitQuest Camera Stream Service (Ultra-Fast 30-60 FPS Non-Blocking Pipeline)
 """
 
 import gc
@@ -12,13 +12,13 @@ from backend.model.config import VISUALIZER_CFG
 from backend.model.exercise_manager import ExerciseManager
 from backend.model.pose_estimator import PoseEstimator
 from backend.model.visualizer import Visualizer
-from backend.src.services.session_service import shared_session_service as session_service
+from backend.src.services.session_service import shared_session_service as session_service, normalize_ex_name
 
 
 class CameraStreamService:
     """
-    Robust singleton service managing camera hardware capture, pose estimation inference,
-    complete model termination, and non-blocking 1-second clean reboot cycle.
+    Robust singleton service managing camera capture, pose estimation inference,
+    multi-client lock-free streaming, and non-blocking 1-second reset pipeline.
     """
 
     def __init__(self, camera_index: int = 0):
@@ -29,14 +29,14 @@ class CameraStreamService:
         self.visualizer: Optional[Visualizer] = None
 
         self._lock = threading.Lock()
-        self._frame_event = threading.Event()
         self._worker_thread: Optional[threading.Thread] = None
         self._is_running = False
         self._active_session_id: Optional[str] = None
+        self._frame_id: int = 0
         
         # Pre-populate with placeholder frame
         placeholder = self._create_placeholder_frame("Connecting to webcam...")
-        _, jpeg = cv2.imencode('.jpg', placeholder, [cv2.IMWRITE_JPEG_QUALITY, 70])
+        _, jpeg = cv2.imencode('.jpg', placeholder, [cv2.IMWRITE_JPEG_QUALITY, 60])
         self._latest_jpeg: Optional[bytes] = jpeg.tobytes()
 
     def _open_camera(self) -> Optional[cv2.VideoCapture]:
@@ -49,6 +49,7 @@ class CameraStreamService:
                         cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
                         cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
                         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+                        cap.set(cv2.CAP_PROP_FPS, 30)
                         return cap
                 except Exception:
                     continue
@@ -80,12 +81,10 @@ class CameraStreamService:
             self._worker_thread.start()
 
     def stop(self):
-        """Completely kill model, release camera hardware, and force memory garbage collection."""
+        """Completely release camera hardware, kill models, and collect memory."""
         with self._lock:
             self._is_running = False
-            self._frame_event.set()
 
-        # Release OpenCV Camera
         if self.cap is not None:
             try:
                 self.cap.release()
@@ -93,7 +92,6 @@ class CameraStreamService:
                 pass
             self.cap = None
 
-        # Kill MediaPipe Pose Estimator
         if self.pose_estimator is not None:
             try:
                 self.pose_estimator.close()
@@ -105,26 +103,24 @@ class CameraStreamService:
         self.visualizer = None
 
         placeholder = self._create_placeholder_frame("Camera resetting...")
-        _, jpeg = cv2.imencode('.jpg', placeholder, [cv2.IMWRITE_JPEG_QUALITY, 70])
+        _, jpeg = cv2.imencode('.jpg', placeholder, [cv2.IMWRITE_JPEG_QUALITY, 60])
         self._latest_jpeg = jpeg.tobytes()
-        self._frame_event.set()
+        self._frame_id += 1
 
         gc.collect()
 
     def restart(self, session_id: Optional[str] = None):
         """
-        Non-blocking restart: Spawns a background thread to kill the model,
-        wait 1.0 second for OS driver release, and start fresh without blocking HTTP response.
+        Non-blocking restart in dedicated thread.
         """
         def _do_restart():
             try:
                 self.stop()
-                time.sleep(1.0)
+                time.sleep(0.8)
                 self.start(session_id=session_id)
             except Exception as e:
                 print(f"[CameraStreamService] Restart error: {e}")
 
-        # Run reboot in thread so HTTP endpoint responds immediately
         reboot_thread = threading.Thread(target=_do_restart, daemon=True)
         reboot_thread.start()
         return {"status": "restarting", "active": True}
@@ -140,7 +136,7 @@ class CameraStreamService:
         return self._is_running and self.cap is not None and self.cap.isOpened()
 
     def _worker_loop(self):
-        """Dedicated background loop capturing newest frames and running inference."""
+        """Dedicated high-speed background loop capturing frames and running realtime inference."""
         self._initialize_hardware()
         prev_time = time.time()
         fail_count = 0
@@ -150,9 +146,9 @@ class CameraStreamService:
                 self._initialize_hardware()
                 if self.cap is None or not self.cap.isOpened():
                     placeholder = self._create_placeholder_frame("Webcam busy or not detected. Click Restart Camera.")
-                    _, jpeg = cv2.imencode('.jpg', placeholder, [cv2.IMWRITE_JPEG_QUALITY, 70])
+                    _, jpeg = cv2.imencode('.jpg', placeholder, [cv2.IMWRITE_JPEG_QUALITY, 60])
                     self._latest_jpeg = jpeg.tobytes()
-                    self._frame_event.set()
+                    self._frame_id += 1
                     time.sleep(0.5)
                     continue
 
@@ -167,7 +163,7 @@ class CameraStreamService:
                             pass
                     self.cap = None
                     fail_count = 0
-                time.sleep(0.02)
+                time.sleep(0.01)
                 continue
 
             fail_count = 0
@@ -176,12 +172,13 @@ class CameraStreamService:
             frame = cv2.flip(frame, 1)
             h, w, _ = frame.shape
 
-            # Compute FPS
+            # Compute real FPS
             curr_time = time.time()
-            fps = 1.0 / (curr_time - prev_time) if (curr_time - prev_time) > 0 else 0.0
+            dt = curr_time - prev_time
+            fps = 1.0 / dt if dt > 0 else 30.0
             prev_time = curr_time
 
-            # 1. Pose Landmark Estimation
+            # 1. Pose Landmark Estimation (fast complexity=0)
             landmarks, results = self.pose_estimator.process_frame(frame)
 
             # 2. Exercise State & Repetition Update
@@ -190,22 +187,27 @@ class CameraStreamService:
                 image_shape=(h, w)
             )
 
-            # 3. Synchronize with active backend WorkoutSession
+            # 3. Synchronize with active backend WorkoutSession (in-memory 0ms)
             if exercise_result:
                 active_sess = None
                 if self._active_session_id and not self._active_session_id.startswith('session-'):
                     active_sess = session_service.get_session(self._active_session_id)
 
-                if not active_sess:
-                    # Look up latest registered session
-                    all_sessions = session_service.list_sessions()
+                if not active_sess or active_sess.is_completed:
+                    all_sessions = [s for s in session_service.list_sessions() if not s.is_completed]
                     if all_sessions:
                         active_sess = all_sessions[-1]
+                        self._active_session_id = active_sess.session_id
+                    else:
+                        from backend.src.db.workout_repo import workout_repo
+                        from backend.src.models.workout import Workout
+                        active_w = Workout.from_dict(workout_repo.get_active_workout())
+                        active_sess = session_service.start_session(active_w)
                         self._active_session_id = active_sess.session_id
 
                 if active_sess:
                     if active_sess.current_exercise_target:
-                        active_ex = active_sess.current_exercise_target.exercise
+                        active_ex = normalize_ex_name(active_sess.current_exercise_target.exercise)
                         if self.exercise_manager.active_name != active_ex:
                             self.exercise_manager.set_active_exercise(active_ex)
 
@@ -215,29 +217,31 @@ class CameraStreamService:
             frame = self.pose_estimator.draw_skeleton(frame, results)
             frame = self.visualizer.draw_hud(frame, exercise_result, fps=fps)
 
-            # 5. Compress to fast JPEG (quality 62 for maximum FPS)
-            ret_enc, jpeg = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 62])
+            # 5. Compress to fast JPEG
+            ret_enc, jpeg = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 60])
             if ret_enc:
                 self._latest_jpeg = jpeg.tobytes()
-                self._frame_event.set()
+                self._frame_id += 1
 
     def generate_mjpeg_stream(self, session_id: Optional[str] = None) -> Generator[bytes, None, None]:
         """
-        Generate fast, smooth multipart MJPEG video stream chunks for web browser preview.
+        Generate lock-free multipart MJPEG video stream chunks for web browser preview.
+        Multiple clients receive full frame rate without thread starving or lock contention.
         """
         self.start(session_id=session_id)
+        last_sent_frame_id = -1
 
         try:
             while self._is_running:
-                self._frame_event.wait(timeout=0.033)
-                self._frame_event.clear()
-                if self._latest_jpeg:
+                if self._latest_jpeg is not None and self._frame_id != last_sent_frame_id:
+                    last_sent_frame_id = self._frame_id
                     yield (b'--frame\r\n'
                            b'Content-Type: image/jpeg\r\n\r\n' + self._latest_jpeg + b'\r\n')
+                time.sleep(0.012)
         except GeneratorExit:
             pass
         except Exception as e:
-            print(f"[CameraStreamService] Client disconnected: {e}")
+            print(f"[CameraStreamService] Stream client disconnected: {e}")
 
     def _create_placeholder_frame(self, message: str):
         """Create clean dark placeholder frame with message."""

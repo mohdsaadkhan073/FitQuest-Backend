@@ -1,7 +1,7 @@
 """
 FitQuest Session Service
 Manages active workout sessions, advances set/exercise progress, calculates incremental scoring,
-persists progress history to MongoDB/in-memory, syncs persistent elder points, and processes model ExerciseResult objects.
+persists progress history, syncs persistent elder points, and processes model ExerciseResult objects.
 """
 
 from typing import Any, Dict, List, Optional, Union
@@ -10,6 +10,20 @@ from backend.src.models.workout_session import WorkoutSession
 from backend.src.services.scoring_service import ScoringService
 from backend.src.db.history_repo import history_repo
 from backend.src.db.elder_repo import elder_repo
+
+
+def normalize_ex_name(name: str) -> str:
+    """Normalize exercise string to canonical name."""
+    if not name:
+        return "squat"
+    n = name.lower().strip().replace("-", "_").replace(" ", "_")
+    if n in ["squats", "squat"]:
+        return "squat"
+    if n in ["pushups", "pushup", "push_ups", "push_up"]:
+        return "pushup"
+    if n in ["jumping_jacks", "jumping_jack", "jumpingjacks", "jumpingjack"]:
+        return "jumping_jack"
+    return n
 
 
 class SessionService:
@@ -38,7 +52,9 @@ class SessionService:
         session = self._sessions.get(session_id)
         if session:
             profile = elder_repo.get_profile()
-            session.current_points = profile.get("current_points", 0)
+            db_points = profile.get("current_points", 0)
+            if db_points > session.current_points:
+                session.current_points = db_points
         return session
 
     def list_sessions(self) -> List[WorkoutSession]:
@@ -46,8 +62,10 @@ class SessionService:
         Return list of all active or stored workout sessions with refreshed points.
         """
         profile = elder_repo.get_profile()
+        db_points = profile.get("current_points", 0)
         for session in self._sessions.values():
-            session.current_points = profile.get("current_points", 0)
+            if db_points > session.current_points:
+                session.current_points = db_points
         return list(self._sessions.values())
 
     def switch_exercise(self, session_id: str, exercise_name: str) -> Optional[WorkoutSession]:
@@ -58,16 +76,19 @@ class SessionService:
         if not session:
             return None
 
-        clean_name = exercise_name.lower().strip()
+        clean_name = normalize_ex_name(exercise_name)
         try:
-            new_index = next(i for i, ex in enumerate(session.workout.exercises) if ex.exercise.lower() == clean_name)
+            new_index = next(
+                i for i, ex in enumerate(session.workout.exercises)
+                if normalize_ex_name(ex.exercise) == clean_name
+            )
         except StopIteration:
             return None
 
         session.current_exercise_index = new_index
         session.current_set_index = 0
 
-        # Reset model rep tracking for this exercise to allow fresh monotonic counting
+        # Reset model rep tracking for this exercise to allow fresh counting
         if clean_name in session._last_processed_model_reps:
             session._last_processed_model_reps[clean_name] = 0
 
@@ -84,9 +105,19 @@ class SessionService:
         result_data: Union[Any, Dict[str, Any]]
     ) -> WorkoutSession:
         """
-        Process an ExerciseResult (or dict) from backend/model, update persistent points & history.
+        Process an ExerciseResult from model or manual simulator, update points & history.
         """
         session = self.get_session(session_id)
+        if not session:
+            all_sessions = self.list_sessions()
+            if all_sessions:
+                session = all_sessions[-1]
+            else:
+                from backend.src.db.workout_repo import workout_repo
+                active_w_dict = workout_repo.get_active_workout()
+                workout = Workout.from_dict(active_w_dict)
+                session = self.start_session(workout)
+
         if not session or session.is_completed:
             return session
 
@@ -98,15 +129,16 @@ class SessionService:
         else:
             raise ValueError(f"Invalid ExerciseResult format: {type(result_data)}")
 
-        exercise_name = payload.get("exercise", "").lower().strip()
-        model_rep_count = payload.get("reps", 0)
+        raw_exercise_name = payload.get("exercise", "")
+        exercise_name = normalize_ex_name(raw_exercise_name)
+        model_rep_count = int(payload.get("reps", 0))
 
         # Check if the result corresponds to the currently active exercise target
         active_target = session.current_exercise_target
-        if not active_target or active_target.exercise != exercise_name:
+        if not active_target or normalize_ex_name(active_target.exercise) != exercise_name:
             return session
 
-        # 1. Monotonic Rep Delta Filtering (prevents double-counting across frames)
+        # 1. Monotonic Rep Delta Filtering
         last_processed = session._last_processed_model_reps.get(exercise_name, 0)
         delta_reps = max(0, model_rep_count - last_processed)
 
@@ -129,14 +161,15 @@ class SessionService:
                 # Accumulate valid reps
                 session.total_valid_reps += accepted
                 
-                # Calculate and accumulate score via ScoringService
-                earned_points = self.scoring_service.calculate_rep_points(active_target, accepted)
+                # Calculate and accumulate score
+                pts_rate = max(1, getattr(active_target, 'points_per_rep', 2))
+                earned_points = accepted * pts_rate
                 
-                # Persist score permanently in ElderRepository (MongoDB)
+                # Update persistent profile and session points
                 updated_profile = elder_repo.add_points(earned_points)
-                session.current_points = updated_profile.get("current_points", 0)
+                session.current_points = updated_profile.get("current_points", session.current_points + earned_points)
 
-                # Persist progress into MongoDB / in-memory history
+                # Persist progress into history
                 history_repo.record_progress(
                     session_id=session.session_id,
                     workout_id=session.workout.workout_id,

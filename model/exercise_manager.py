@@ -30,18 +30,26 @@ class ExerciseManager:
 
     @property
     def current_exercise(self) -> BaseExercise:
-        return self.exercises[self.active_name]
+        return self.exercises.get(self.active_name, self.exercises["squat"])
 
     def set_active_exercise(self, name: str) -> bool:
         """
         Switch active exercise by identifier ('squat', 'pushup', 'jumping_jack').
-        
-        :param name: Exercise key string.
-        :return: True if active exercise changed successfully.
         """
+        if not name:
+            return False
         clean_name = name.lower().strip()
-        if clean_name in self.exercises:
-            self.active_name = clean_name
+        if "jump" in clean_name:
+            canonical = "jumping_jack"
+        elif "push" in clean_name:
+            canonical = "pushup"
+        elif "squat" in clean_name:
+            canonical = "squat"
+        else:
+            canonical = clean_name
+
+        if canonical in self.exercises:
+            self.active_name = canonical
             return True
         return False
 
@@ -61,10 +69,6 @@ class ExerciseManager:
     ) -> ExerciseResult:
         """
         Pass frame landmarks to current active exercise detector and return structured result.
-        
-        :param landmarks: Pose landmarks from PoseEstimator.
-        :param image_shape: (height, width) frame dimension tuple.
-        :return: ExerciseResult dataclass.
         """
         return self.current_exercise.update(landmarks, image_shape)
 

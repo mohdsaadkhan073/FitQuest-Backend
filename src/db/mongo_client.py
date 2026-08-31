@@ -21,14 +21,19 @@ _is_connected = False
 def init_mongo() -> bool:
     """Initialize MongoDB connection with short timeout fallback."""
     global _client, _db, _is_connected
+    if _is_connected and _db is not None:
+        return True
+
     try:
         import pymongo
-        _client = pymongo.MongoClient(MONGO_URI, serverSelectionTimeoutMS=1500)
-        # Verify connection
-        _client.admin.command('ping')
+        _client = pymongo.MongoClient(
+            MONGO_URI,
+            serverSelectionTimeoutMS=2000,
+            connectTimeoutMS=2000,
+            socketTimeoutMS=2000
+        )
         _db = _client[MONGO_DB_NAME]
         _is_connected = True
-        print(f"[MongoDB] Connected successfully to database '{MONGO_DB_NAME}'")
         return True
     except Exception as e:
         _is_connected = False

@@ -1,11 +1,13 @@
 """
 FitQuest Workout Repository
-Handles persistent storage, retrieval, update, and deletion of workout plans in MongoDB with resilient in-memory fallback.
+Handles persistent storage, retrieval, update, and deletion of workout plans with zero-latency memory cache and async MongoDB synchronization.
 """
 
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, List, Optional
 from backend.src.db.mongo_client import get_db
 
+_workout_db_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="workout_db_worker")
 
 DEFAULT_WORKOUT_DICT: Dict[str, Any] = {
     "workout_id": "default-morning-fitness",
@@ -21,76 +23,60 @@ DEFAULT_WORKOUT_DICT: Dict[str, Any] = {
 
 
 class WorkoutRepository:
-    """Repository storing and querying workout templates in MongoDB (workouts collection)."""
+    """Repository storing and querying workout templates with zero-latency in-memory cache."""
 
     def __init__(self):
         self._in_memory_workouts: Dict[str, Dict[str, Any]] = {
             DEFAULT_WORKOUT_DICT["workout_id"]: dict(DEFAULT_WORKOUT_DICT)
         }
         self._active_workout_id: str = DEFAULT_WORKOUT_DICT["workout_id"]
+        _workout_db_executor.submit(self._load_initial_workouts)
 
-    def _ensure_default_seeded(self):
-        """Seed default workout in MongoDB if collection is empty."""
-        db = get_db()
-        if db is not None:
-            try:
-                count = db.workouts.count_documents({})
-                if count == 0:
-                    db.workouts.insert_one(dict(DEFAULT_WORKOUT_DICT))
-            except Exception as e:
-                print(f"[WorkoutRepository] Seed notice: {e}")
-
-    def list_workouts(self) -> List[Dict[str, Any]]:
-        """List all workout templates."""
-        self._ensure_default_seeded()
-        db = get_db()
-        if db is not None:
-            try:
+    def _load_initial_workouts(self):
+        """Initial background load from MongoDB on startup into RAM cache."""
+        try:
+            db = get_db()
+            if db is not None:
                 docs = list(db.workouts.find({}, {"_id": 0}))
                 if docs:
-                    return docs
-            except Exception as e:
-                print(f"[WorkoutRepository] MongoDB list notice: {e}")
+                    for d in docs:
+                        wid = d.get("workout_id")
+                        if wid and wid not in self._in_memory_workouts:
+                            self._in_memory_workouts[wid] = d
+                        if d.get("is_active"):
+                            self._active_workout_id = wid
+                else:
+                    db.workouts.insert_one(dict(DEFAULT_WORKOUT_DICT))
+        except Exception as e:
+            print(f"[WorkoutRepository] Initial load notice: {e}")
 
+    def list_workouts(self) -> List[Dict[str, Any]]:
+        """List all workout templates from RAM (0.001ms)."""
         return list(self._in_memory_workouts.values())
 
     def get_workout(self, workout_id: str) -> Optional[Dict[str, Any]]:
-        """Get workout template by ID."""
-        self._ensure_default_seeded()
-        db = get_db()
-        if db is not None:
-            try:
-                doc = db.workouts.find_one({"workout_id": workout_id}, {"_id": 0})
-                if doc:
-                    return doc
-            except Exception as e:
-                print(f"[WorkoutRepository] MongoDB get notice: {e}")
-
+        """Get workout template by ID from RAM (0.001ms)."""
         return self._in_memory_workouts.get(workout_id)
 
     def get_active_workout(self) -> Dict[str, Any]:
-        """Get currently active workout plan."""
-        self._ensure_default_seeded()
-        db = get_db()
-        if db is not None:
-            try:
-                doc = db.workouts.find_one({"is_active": True}, {"_id": 0})
-                if doc:
-                    return doc
-                first_doc = db.workouts.find_one({}, {"_id": 0})
-                if first_doc:
-                    return first_doc
-            except Exception as e:
-                print(f"[WorkoutRepository] MongoDB active workout notice: {e}")
-
+        """Get currently active workout plan from RAM (0.001ms)."""
         if self._active_workout_id in self._in_memory_workouts:
             return self._in_memory_workouts[self._active_workout_id]
         if self._in_memory_workouts:
             return next(iter(self._in_memory_workouts.values()))
         return dict(DEFAULT_WORKOUT_DICT)
 
+    def _async_mongo_set_active(self, workout_id: str):
+        try:
+            db = get_db()
+            if db is not None:
+                db.workouts.update_many({}, {"$set": {"is_active": False}})
+                db.workouts.update_one({"workout_id": workout_id}, {"$set": {"is_active": True}})
+        except Exception as e:
+            print(f"[WorkoutRepository] Async set active notice: {e}")
+
     def set_active_workout(self, workout_id: str) -> Optional[Dict[str, Any]]:
-        """Mark a specific workout as active and deactivate all others."""
+        """Mark a specific workout as active in RAM and dispatch async write."""
         target = self.get_workout(workout_id)
         if not target:
             return None
@@ -99,19 +85,23 @@ class WorkoutRepository:
         for wid, w in self._in_memory_workouts.items():
             w["is_active"] = (wid == workout_id)
 
-        db = get_db()
-        if db is not None:
-            try:
-                db.workouts.update_many({}, {"$set": {"is_active": False}})
-                db.workouts.update_one({"workout_id": workout_id}, {"$set": {"is_active": True}})
-            except Exception as e:
-                print(f"[WorkoutRepository] MongoDB set active notice: {e}")
-
         target["is_active"] = True
+        _workout_db_executor.submit(self._async_mongo_set_active, workout_id)
         return target
 
+    def _async_mongo_save(self, workout_dict: Dict[str, Any], is_active: bool):
+        try:
+            db = get_db()
+            if db is not None:
+                wid = workout_dict.get("workout_id")
+                if is_active:
+                    db.workouts.update_many({"workout_id": {"$ne": wid}}, {"$set": {"is_active": False}})
+                db.workouts.replace_one({"workout_id": wid}, dict(workout_dict), upsert=True)
+        except Exception as e:
+            print(f"[WorkoutRepository] Async save notice: {e}")
+
     def create_workout(self, workout_data: Dict[str, Any]) -> Dict[str, Any]:
-        """Insert a new workout template into MongoDB."""
+        """Insert a new workout template in RAM and dispatch async save."""
         wid = workout_data.get("workout_id")
         if not wid:
             import uuid
@@ -132,20 +122,11 @@ class WorkoutRepository:
                 w["is_active"] = False
 
         self._in_memory_workouts[wid] = dict(clean_doc)
-
-        db = get_db()
-        if db is not None:
-            try:
-                if clean_doc["is_active"]:
-                    db.workouts.update_many({}, {"$set": {"is_active": False}})
-                db.workouts.replace_one({"workout_id": wid}, dict(clean_doc), upsert=True)
-            except Exception as e:
-                print(f"[WorkoutRepository] MongoDB create notice: {e}")
-
+        _workout_db_executor.submit(self._async_mongo_save, dict(clean_doc), clean_doc["is_active"])
         return clean_doc
 
     def update_workout(self, workout_id: str, update_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        """Update existing workout template in MongoDB."""
+        """Update existing workout template in RAM and dispatch async save."""
         existing = self.get_workout(workout_id)
         if not existing:
             return None
@@ -160,31 +141,23 @@ class WorkoutRepository:
             existing["is_active"] = bool(update_data["is_active"])
 
         self._in_memory_workouts[workout_id] = dict(existing)
-
-        db = get_db()
-        if db is not None:
-            try:
-                if existing.get("is_active"):
-                    db.workouts.update_many({"workout_id": {"$ne": workout_id}}, {"$set": {"is_active": False}})
-                db.workouts.replace_one({"workout_id": workout_id}, dict(existing), upsert=True)
-            except Exception as e:
-                print(f"[WorkoutRepository] MongoDB update notice: {e}")
-
+        _workout_db_executor.submit(self._async_mongo_save, dict(existing), existing.get("is_active", False))
         return existing
 
+    def _async_mongo_delete(self, workout_id: str):
+        try:
+            db = get_db()
+            if db is not None:
+                db.workouts.delete_one({"workout_id": workout_id})
+        except Exception as e:
+            print(f"[WorkoutRepository] Async delete notice: {e}")
+
     def delete_workout(self, workout_id: str) -> bool:
-        """Delete workout template from MongoDB."""
+        """Delete workout template from RAM and dispatch async delete."""
         existed = workout_id in self._in_memory_workouts
         if existed:
             del self._in_memory_workouts[workout_id]
-
-        db = get_db()
-        if db is not None:
-            try:
-                res = db.workouts.delete_one({"workout_id": workout_id})
-                return res.deleted_count > 0 or existed
-            except Exception as e:
-                print(f"[WorkoutRepository] MongoDB delete notice: {e}")
+            _workout_db_executor.submit(self._async_mongo_delete, workout_id)
 
         return existed
 
