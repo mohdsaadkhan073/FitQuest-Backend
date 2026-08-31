@@ -66,6 +66,31 @@ class WorkoutSession:
         """
         return self.current_points >= self.workout.target_points
 
+    def get_exercise_status(self, ex_idx: int) -> str:
+        """Return 'completed' | 'in_progress' | 'pending' for exercise at ex_idx."""
+        if ex_idx < self.current_exercise_index:
+            return "completed"
+        elif ex_idx == self.current_exercise_index:
+            ex_target = self.workout.exercises[ex_idx]
+            if self.current_set_index >= ex_target.sets:
+                return "completed"
+            
+            # Check if any progress made in current set
+            prog = self.current_set_progress
+            if (prog and prog.completed_reps > 0) or self.current_set_index > 0:
+                return "in_progress"
+            return "pending"
+        else:
+            return "pending"
+
+    @property
+    def completed_exercises(self) -> List[str]:
+        """List of exercise names that are completed in this session."""
+        return [
+            ex.exercise for idx, ex in enumerate(self.workout.exercises)
+            if self.get_exercise_status(idx) == "completed"
+        ]
+
     def to_dict(self) -> Dict[str, Any]:
         """Serialize WorkoutSession state to standard dictionary."""
         active_target = self.current_exercise_target
@@ -85,5 +110,6 @@ class WorkoutSession:
             "current_points": self.current_points,
             "target_points": self.workout.target_points,
             "target_reached": self.target_reached,
-            "is_completed": self.is_completed
+            "is_completed": self.is_completed,
+            "completed_exercises": self.completed_exercises
         }

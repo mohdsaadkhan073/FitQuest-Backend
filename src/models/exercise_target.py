@@ -14,6 +14,7 @@ class ExerciseTarget:
     sets: int                 # Required number of sets (e.g., 3)
     reps_per_set: int         # Required repetitions per set (e.g., 20)
     points_per_rep: int = 1   # Points awarded per valid completed repetition (e.g., 2)
+    status: str = "pending"   # 'pending' | 'in_progress' | 'completed'
 
     def __post_init__(self):
         self.exercise = self.exercise.lower().strip()
@@ -42,5 +43,6 @@ class ExerciseTarget:
             "reps_per_set": self.reps_per_set,
             "points_per_rep": self.points_per_rep,
             "total_target_reps": self.total_target_reps,
-            "max_possible_points": self.max_possible_points
+            "max_possible_points": self.max_possible_points,
+            "status": self.status
         }

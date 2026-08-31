@@ -13,6 +13,7 @@ class ExerciseTargetSchema(BaseModel):
     sets: int = Field(..., gt=0, description="Number of sets required")
     reps_per_set: int = Field(..., gt=0, description="Repetitions required per set")
     points_per_rep: int = Field(1, ge=0, description="Points awarded per valid repetition")
+    status: str = Field("pending", description="Status: 'pending', 'in_progress', 'completed'")
 
 
 class CreateWorkoutSchema(BaseModel):
@@ -69,6 +70,8 @@ class UpdateElderProfileSchema(BaseModel):
     age: Optional[int] = Field(None, gt=0)
     reset_schedule: Optional[str] = Field(None, description="'daily', 'weekly', 'monthly', or 'custom'")
     target_points: Optional[int] = Field(None, gt=0)
+    active_workout_id: Optional[str] = Field(None)
+    active_workout_name: Optional[str] = Field(None)
     completed_exercises: Optional[List[str]] = Field(None)
 
 
@@ -125,6 +128,7 @@ class WorkoutSessionSchema(BaseModel):
     target_points: int
     target_reached: bool
     is_completed: bool
+    completed_exercises: List[str] = Field(default_factory=list)
 
 
 class DayExerciseHistorySchema(BaseModel):
