@@ -1,7 +1,14 @@
 """
 FitQuest Services Package
-Will contain business logic services:
-- WorkoutEngine: Managing sets, targets, and exercise progression.
-- ScoringService: Calculating points based on rep counts & quality.
-- HardwareService: Communicating over serial with Arduino UNO / Servo unlock mechanism.
+Provides ScoringService, WorkoutService, and SessionService.
 """
+
+from backend.src.services.scoring_service import ScoringService
+from backend.src.services.session_service import SessionService
+from backend.src.services.workout_service import WorkoutService
+
+__all__ = [
+    "ScoringService",
+    "WorkoutService",
+    "SessionService",
+]
