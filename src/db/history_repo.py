@@ -1,11 +1,14 @@
 """
 FitQuest History Repository
-Handles persistence of completed exercise reps, sets, and sessions to MongoDB with resilient in-memory fallback.
+Handles persistence of completed exercise reps, sets, and sessions to MongoDB with resilient in-memory fallback and non-blocking background writes.
 """
 
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 from backend.src.db.mongo_client import get_db
+
+_db_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="history_db_worker")
 
 
 class HistoryRepository:
@@ -13,6 +16,15 @@ class HistoryRepository:
 
     def __init__(self):
         self._in_memory_records: List[Dict[str, Any]] = []
+
+    def _async_mongo_insert(self, record: Dict[str, Any]):
+        """Background thread inserting record into MongoDB without blocking video stream."""
+        db = get_db()
+        if db is not None:
+            try:
+                db.workout_history.insert_one(dict(record))
+            except Exception as e:
+                print(f"[HistoryRepository] MongoDB insert notice: {e}")
 
     def record_progress(
         self,
@@ -41,16 +53,11 @@ class HistoryRepository:
             "timestamp": ts.isoformat()
         }
 
-        # Save in-memory
+        # Save immediately in-memory (0ms)
         self._in_memory_records.append(record)
 
-        # Save to MongoDB if connected
-        db = get_db()
-        if db is not None:
-            try:
-                db.workout_history.insert_one(dict(record))
-            except Exception as e:
-                print(f"[HistoryRepository] MongoDB insert notice: {e}")
+        # Dispatch async write to MongoDB (non-blocking)
+        _db_executor.submit(self._async_mongo_insert, record)
 
         return record
 
@@ -126,7 +133,6 @@ class HistoryRepository:
         result = []
         for d in sorted_dates:
             item = grouped[d]
-            # Only include day if it has at least some activity
             if item["total_reps"] > 0 or item["total_points"] > 0 or item["exercises_map"]:
                 result.append({
                     "date": item["date"],

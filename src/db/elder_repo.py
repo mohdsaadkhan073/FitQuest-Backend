@@ -1,13 +1,15 @@
 """
 FitQuest Elder Profile & Points Repository
 Handles persistent storage of elder profile, accumulated points, lifetime score, streak,
-and automated/custom points reset schedules in MongoDB with resilient in-memory fallback.
+completed exercise state, and automated/custom points reset schedules in MongoDB with non-blocking background writes.
 """
 
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone, timedelta
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 from backend.src.db.mongo_client import get_db
 
+_db_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="elder_db_worker")
 
 DEFAULT_ELDER_PROFILE: Dict[str, Any] = {
     "profile_id": "elder-default-profile",
@@ -23,11 +25,12 @@ DEFAULT_ELDER_PROFILE: Dict[str, Any] = {
     "reward_unlocked": False,
     "active_workout_id": "default-morning-fitness",
     "active_workout_name": "Grandpa's Daily Motivation",
+    "completed_exercises": [],
 }
 
 
 class ElderRepository:
-    """Repository managing elder profile, points, streak, and reset schedule policies."""
+    """Repository managing elder profile, points, streak, completed exercises, and reset schedule policies."""
 
     def __init__(self):
         self._in_memory_profile: Dict[str, Any] = dict(DEFAULT_ELDER_PROFILE)
@@ -43,6 +46,21 @@ class ElderRepository:
             except Exception as e:
                 print(f"[ElderRepository] Seed notice: {e}")
 
+    def _async_mongo_save(self, profile: Dict[str, Any]):
+        """Background thread saving profile to MongoDB without blocking camera stream."""
+        db = get_db()
+        if db is not None:
+            try:
+                pid = profile.get("profile_id", "elder-default-profile")
+                db.elder_profile.replace_one({"profile_id": pid}, dict(profile), upsert=True)
+            except Exception as e:
+                print(f"[ElderRepository] MongoDB save notice: {e}")
+
+    def _save_profile_to_db(self, profile: Dict[str, Any]):
+        """Persist profile immediately in-memory and dispatch async write to MongoDB."""
+        self._in_memory_profile = dict(profile)
+        _db_executor.submit(self._async_mongo_save, dict(profile))
+
     def _check_and_apply_reset_schedule(self, profile: Dict[str, Any]) -> Dict[str, Any]:
         """
         Check if points need to be reset based on the configured reset_schedule.
@@ -53,7 +71,6 @@ class ElderRepository:
         """
         schedule = profile.get("reset_schedule", "custom").lower()
         if schedule == "custom":
-            # In custom mode, points accumulate indefinitely until manually reset
             return profile
 
         last_reset_str = profile.get("last_points_reset_at")
@@ -61,9 +78,7 @@ class ElderRepository:
             return profile
 
         try:
-            # Parse ISO timestamp
             if isinstance(last_reset_str, str):
-                # Handle possible trailing Z or timezone offsets
                 clean_ts = last_reset_str.replace("Z", "+00:00")
                 last_reset_dt = datetime.fromisoformat(clean_ts)
             else:
@@ -88,6 +103,7 @@ class ElderRepository:
                 profile["current_points"] = 0
                 profile["last_points_reset_at"] = now.isoformat()
                 profile["reward_unlocked"] = False
+                profile["completed_exercises"] = []
                 self._save_profile_to_db(profile)
 
         except Exception as e:
@@ -95,19 +111,8 @@ class ElderRepository:
 
         return profile
 
-    def _save_profile_to_db(self, profile: Dict[str, Any]):
-        """Persist profile to MongoDB and update in-memory cache."""
-        self._in_memory_profile = dict(profile)
-        db = get_db()
-        if db is not None:
-            try:
-                pid = profile.get("profile_id", "elder-default-profile")
-                db.elder_profile.replace_one({"profile_id": pid}, dict(profile), upsert=True)
-            except Exception as e:
-                print(f"[ElderRepository] MongoDB save notice: {e}")
-
     def get_profile(self) -> Dict[str, Any]:
-        """Get elder profile and evaluate reset schedule."""
+        """Get elder profile, verify completed_exercises array, and evaluate reset schedule."""
         self._ensure_default_seeded()
         profile = None
         db = get_db()
@@ -121,6 +126,9 @@ class ElderRepository:
 
         if not profile:
             profile = dict(self._in_memory_profile)
+
+        if "completed_exercises" not in profile:
+            profile["completed_exercises"] = []
 
         # Check and apply reset policy
         profile = self._check_and_apply_reset_schedule(profile)
@@ -139,6 +147,7 @@ class ElderRepository:
         target_points: Optional[int] = None,
         active_workout_id: Optional[str] = None,
         active_workout_name: Optional[str] = None,
+        completed_exercises: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
         """Update elder profile fields and settings without flushing accumulated points."""
         profile = self.get_profile()
@@ -155,9 +164,22 @@ class ElderRepository:
             profile["active_workout_id"] = active_workout_id
         if active_workout_name is not None:
             profile["active_workout_name"] = active_workout_name
+        if completed_exercises is not None:
+            profile["completed_exercises"] = list(set(completed_exercises))
 
         profile["reward_unlocked"] = (profile["current_points"] >= profile["target_points"])
         self._save_profile_to_db(profile)
+        return profile
+
+    def mark_exercise_completed(self, exercise_name: str) -> Dict[str, Any]:
+        """Record an exercise as completed in the persistent elder profile."""
+        profile = self.get_profile()
+        clean_name = exercise_name.lower().strip()
+        current_list = profile.get("completed_exercises", [])
+        if clean_name not in current_list:
+            current_list.append(clean_name)
+            profile["completed_exercises"] = current_list
+            self._save_profile_to_db(profile)
         return profile
 
     def add_points(self, points: int) -> Dict[str, Any]:
@@ -181,11 +203,12 @@ class ElderRepository:
         return profile
 
     def reset_points(self) -> Dict[str, Any]:
-        """Manually reset elder current points to 0 (for Custom schedule or manual family action)."""
+        """Manually reset elder current points to 0 and clear completed exercises."""
         profile = self.get_profile()
         profile["current_points"] = 0
         profile["last_points_reset_at"] = datetime.now(timezone.utc).isoformat()
         profile["reward_unlocked"] = False
+        profile["completed_exercises"] = []
         self._save_profile_to_db(profile)
         return profile
 

@@ -60,6 +60,7 @@ class ElderProfileSchema(BaseModel):
     reward_unlocked: bool
     active_workout_id: Optional[str] = None
     active_workout_name: Optional[str] = None
+    completed_exercises: List[str] = Field(default_factory=list)
 
 
 class UpdateElderProfileSchema(BaseModel):
@@ -68,6 +69,7 @@ class UpdateElderProfileSchema(BaseModel):
     age: Optional[int] = Field(None, gt=0)
     reset_schedule: Optional[str] = Field(None, description="'daily', 'weekly', 'monthly', or 'custom'")
     target_points: Optional[int] = Field(None, gt=0)
+    completed_exercises: Optional[List[str]] = Field(None)
 
 
 class ResetPointsResponseSchema(BaseModel):

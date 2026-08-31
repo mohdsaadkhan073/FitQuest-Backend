@@ -167,6 +167,7 @@ class SessionService:
 
                 # Check if all sets for current exercise are completed
                 if session.current_set_index >= active_target.sets:
+                    elder_repo.mark_exercise_completed(exercise_name)
                     session.current_exercise_index += 1
                     session.current_set_index = 0
 

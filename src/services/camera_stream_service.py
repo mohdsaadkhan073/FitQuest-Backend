@@ -215,13 +215,11 @@ class CameraStreamService:
             frame = self.pose_estimator.draw_skeleton(frame, results)
             frame = self.visualizer.draw_hud(frame, exercise_result, fps=fps)
 
-            # 5. Compress to fast JPEG
-            ret_enc, jpeg = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 68])
+            # 5. Compress to fast JPEG (quality 62 for maximum FPS)
+            ret_enc, jpeg = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 62])
             if ret_enc:
                 self._latest_jpeg = jpeg.tobytes()
                 self._frame_event.set()
-
-            time.sleep(0.01)
 
     def generate_mjpeg_stream(self, session_id: Optional[str] = None) -> Generator[bytes, None, None]:
         """
@@ -231,7 +229,7 @@ class CameraStreamService:
 
         try:
             while self._is_running:
-                self._frame_event.wait(timeout=0.3)
+                self._frame_event.wait(timeout=0.033)
                 self._frame_event.clear()
                 if self._latest_jpeg:
                     yield (b'--frame\r\n'
