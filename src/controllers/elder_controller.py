@@ -9,6 +9,7 @@ from backend.src.schemas import (
     ElderProfileSchema,
     UpdateElderProfileSchema,
     ResetPointsResponseSchema,
+    OverrideLockSchema,
 )
 
 
@@ -45,6 +46,12 @@ class ElderController:
             last_points_reset_at=profile["last_points_reset_at"],
             message="Elder points successfully reset to 0.",
         )
+
+    @staticmethod
+    def override_lock(payload: OverrideLockSchema) -> ElderProfileSchema:
+        """Manually override physical reward box lock/unlock state."""
+        profile = elder_repo.override_reward_lock(payload.reward_unlocked)
+        return ElderProfileSchema(**profile)
 
 
 shared_elder_controller = ElderController()

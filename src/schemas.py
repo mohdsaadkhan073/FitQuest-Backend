@@ -83,6 +83,11 @@ class ResetPointsResponseSchema(BaseModel):
     message: str
 
 
+class OverrideLockSchema(BaseModel):
+    """Schema for manually locking or unlocking the physical reward box."""
+    reward_unlocked: bool = Field(..., description="True to unlock box, False to lock box")
+
+
 class CreateSessionSchema(BaseModel):
     """Schema for starting a new workout session."""
     workout_id: Optional[str] = Field(None, description="ID of workout plan to start")

@@ -9,6 +9,7 @@ from backend.src.schemas import (
     ElderProfileSchema,
     UpdateElderProfileSchema,
     ResetPointsResponseSchema,
+    OverrideLockSchema,
 )
 
 router = APIRouter(prefix="/api/v1/elder", tags=["Elder"])
@@ -30,3 +31,9 @@ def update_elder_profile(payload: UpdateElderProfileSchema):
 def reset_elder_points():
     """Manually reset elder accumulated points to 0."""
     return ElderController.reset_points()
+
+
+@router.post("/override-lock", response_model=ElderProfileSchema)
+def override_elder_lock(payload: OverrideLockSchema):
+    """Manually lock or unlock the physical reward box."""
+    return ElderController.override_lock(payload)

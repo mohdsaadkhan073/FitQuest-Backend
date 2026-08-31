@@ -126,7 +126,12 @@ class ElderRepository:
         
         target = profile.get("target_points", 100)
         curr = profile.get("current_points", 0)
-        profile["reward_unlocked"] = (curr >= target and target > 0)
+        # Auto-unlock if points target is met; preserve manual unlock override state
+        if curr >= target and target > 0:
+            profile["reward_unlocked"] = True
+        elif "reward_unlocked" not in profile:
+            profile["reward_unlocked"] = False
+
         return profile
 
     def update_profile(
@@ -160,7 +165,9 @@ class ElderRepository:
         if completed_exercise_ids is not None:
             profile["completed_exercise_ids"] = list(set(completed_exercise_ids))
 
-        profile["reward_unlocked"] = (profile["current_points"] >= profile["target_points"])
+        if profile.get("current_points", 0) >= profile.get("target_points", 100):
+            profile["reward_unlocked"] = True
+
         self._save_profile_to_db(profile)
         return profile
 
@@ -213,6 +220,13 @@ class ElderRepository:
         profile["reward_unlocked"] = False
         profile["completed_exercises"] = []
         profile["completed_exercise_ids"] = []
+        self._save_profile_to_db(profile)
+        return profile
+
+    def override_reward_lock(self, is_unlocked: bool) -> Dict[str, Any]:
+        """Manually override physical reward box lock state (True = Unlocked, False = Locked)."""
+        profile = self.get_profile()
+        profile["reward_unlocked"] = bool(is_unlocked)
         self._save_profile_to_db(profile)
         return profile
 
