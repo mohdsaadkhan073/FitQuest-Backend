@@ -24,6 +24,8 @@ class Workout:
             raise ValueError("Workout must contain at least one ExerciseTarget")
         if self.target_points <= 0:
             raise ValueError(f"Target points must be greater than 0, got {self.target_points}")
+        if not self.workout_id:
+            self.workout_id = str(uuid.uuid4())
 
     def get_exercise_target(self, exercise_name: str) -> Optional[ExerciseTarget]:
         """Find ExerciseTarget by exercise name."""

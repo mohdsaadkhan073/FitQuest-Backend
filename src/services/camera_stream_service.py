@@ -69,7 +69,7 @@ class CameraStreamService:
     def start(self, session_id: Optional[str] = None):
         """Start the background camera and inference worker thread."""
         with self._lock:
-            if session_id:
+            if session_id and not session_id.startswith('session-') and session_id != 'null':
                 self._active_session_id = session_id
 
             if self._is_running and self._worker_thread and self._worker_thread.is_alive():
@@ -191,14 +191,25 @@ class CameraStreamService:
             )
 
             # 3. Synchronize with active backend WorkoutSession
-            if self._active_session_id and exercise_result:
-                active_sess = session_service.get_session(self._active_session_id)
-                if active_sess and active_sess.current_exercise_target:
-                    active_ex = active_sess.current_exercise_target.exercise
-                    if self.exercise_manager.active_name != active_ex:
-                        self.exercise_manager.set_active_exercise(active_ex)
+            if exercise_result:
+                active_sess = None
+                if self._active_session_id and not self._active_session_id.startswith('session-'):
+                    active_sess = session_service.get_session(self._active_session_id)
 
-                session_service.process_exercise_result(self._active_session_id, exercise_result)
+                if not active_sess:
+                    # Look up latest registered session
+                    all_sessions = session_service.list_sessions()
+                    if all_sessions:
+                        active_sess = all_sessions[-1]
+                        self._active_session_id = active_sess.session_id
+
+                if active_sess:
+                    if active_sess.current_exercise_target:
+                        active_ex = active_sess.current_exercise_target.exercise
+                        if self.exercise_manager.active_name != active_ex:
+                            self.exercise_manager.set_active_exercise(active_ex)
+
+                    session_service.process_exercise_result(active_sess.session_id, exercise_result)
 
             # 4. Draw Skeleton Overlay & FitQuest HUD
             frame = self.pose_estimator.draw_skeleton(frame, results)

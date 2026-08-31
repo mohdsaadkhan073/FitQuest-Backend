@@ -72,7 +72,7 @@ class SquatDetector(BaseExercise):
                 state="LOW_CONFIDENCE",
                 confidence=confidence,
                 metrics={},
-                feedback="Step back so full legs are visible"
+                feedback="Step back so full body and legs are visible"
             )
 
         left_hip = get_landmark_coords(landmarks, self.LEFT_HIP, w, h)[:2]
@@ -89,7 +89,8 @@ class SquatDetector(BaseExercise):
         smooth_left_angle = self.left_knee_smoother.filter(raw_left_angle)
         smooth_right_angle = self.right_knee_smoother.filter(raw_right_angle)
 
-        avg_knee_angle = (smooth_left_angle + smooth_right_angle) / 2.0
+        # Use effective knee angle (taking the more bent knee or average)
+        avg_knee_angle = min(smooth_left_angle, smooth_right_angle)
 
         if self.state == "UP" or self.state == "INITIALIZING":
             if avg_knee_angle <= self.cfg.DOWN_THRESHOLD:

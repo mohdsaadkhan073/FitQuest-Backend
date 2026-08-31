@@ -1,23 +1,32 @@
 """
 FitQuest FastAPI Application Entry Point
-Exposes REST API endpoints for workout management, session progression, model integration, and scoring.
+Exposes REST API endpoints for workout management, session progression, model integration, scoring, and progress history.
 """
 
 import os
 import sys
+from dotenv import load_dotenv
 from fastapi import FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+
+# Load environment variables from .env files
+load_dotenv()
+load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
 
 # Ensure project root is in sys.path
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
+from backend.src.db.mongo_client import init_mongo
 from backend.src.routes.session_routes import router as session_router
 from backend.src.routes.stream_routes import router as stream_router
 from backend.src.routes.workout_routes import router as workout_router
 from backend.src.schemas import HealthCheckSchema
+
+# Initialize DB connection on startup (with graceful in-memory fallback)
+init_mongo()
 
 app = FastAPI(
     title="FitQuest API",

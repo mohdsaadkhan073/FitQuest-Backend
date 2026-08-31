@@ -45,6 +45,11 @@ class ExerciseResultSchema(BaseModel):
     feedback: str = Field("", description="Real-time form feedback message")
 
 
+class SwitchExerciseSchema(BaseModel):
+    """Schema for switching active exercise mode."""
+    exercise: str = Field(..., description="Exercise identifier to switch to")
+
+
 class SetProgressSchema(BaseModel):
     """Schema for reporting set progress."""
     set_number: int
@@ -70,6 +75,35 @@ class WorkoutSessionSchema(BaseModel):
     target_points: int
     target_reached: bool
     is_completed: bool
+
+
+class DayExerciseHistorySchema(BaseModel):
+    """Schema for single exercise progress on a given day."""
+    exercise: str
+    reps: int
+    sets: int = 1
+    points: int = 0
+
+
+class DayHistorySchema(BaseModel):
+    """Schema for day-wise aggregated workout progress."""
+    date: str
+    display_date: str
+    total_reps: int
+    total_points: int
+    sessions_count: int = 0
+    exercises: List[DayExerciseHistorySchema] = []
+
+
+class RecordHistoryPayloadSchema(BaseModel):
+    """Schema for recording completed workout sets/exercises."""
+    session_id: str
+    workout_id: str
+    workout_name: str
+    exercise: str
+    reps: int
+    sets: int = 1
+    points: int = 0
 
 
 class HealthCheckSchema(BaseModel):

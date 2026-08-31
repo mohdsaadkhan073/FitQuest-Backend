@@ -116,6 +116,41 @@ class TestAPIEndpoints(unittest.TestCase):
         response = self.client.get("/api/v1/sessions/invalid-session-999")
         self.assertEqual(response.status_code, 404)
 
+    def test_07_switch_exercise(self):
+        # Create multi-exercise workout
+        w_res = self.client.post("/api/v1/workouts", json={
+            "name": "Multi Exercise Test",
+            "exercises": [
+                {"exercise": "squat", "sets": 2, "reps_per_set": 10, "points_per_rep": 2},
+                {"exercise": "pushup", "sets": 2, "reps_per_set": 10, "points_per_rep": 3},
+            ],
+            "target_points": 50
+        })
+        workout_id = w_res.json()["workout_id"]
+        s_res = self.client.post("/api/v1/sessions", json={"workout_id": workout_id})
+        session_id = s_res.json()["session_id"]
+
+        # Switch to pushup
+        switch_res = self.client.post(f"/api/v1/sessions/{session_id}/switch-exercise", json={"exercise": "pushup"})
+        self.assertEqual(switch_res.status_code, 200)
+        switched_data = switch_res.json()
+        self.assertEqual(switched_data["current_exercise"], "pushup")
+        self.assertEqual(switched_data["current_exercise_index"], 1)
+
+    def test_08_daywise_history(self):
+        res = self.client.get("/api/v1/sessions/history/daywise")
+        self.assertEqual(res.status_code, 200)
+        history = res.json()
+        self.assertIsInstance(history, list)
+        self.assertGreaterEqual(len(history), 1)
+        self.assertIn("display_date", history[0])
+
+    def test_09_list_sessions(self):
+        res = self.client.get("/api/v1/sessions")
+        self.assertEqual(res.status_code, 200)
+        sessions = res.json()
+        self.assertIsInstance(sessions, list)
+
 
 if __name__ == "__main__":
     unittest.main()

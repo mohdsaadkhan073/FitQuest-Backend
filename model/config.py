@@ -10,32 +10,31 @@ from typing import Dict, Tuple
 @dataclass
 class SquatConfig:
     # Knee angle thresholds (degrees)
-    UP_THRESHOLD: float = 158.0   # Angle above which user is considered standing (UP)
-    DOWN_THRESHOLD: float = 140.0  # Angle below which user is considered in squat depth (DOWN) - Shallow bend
-    MIN_VISIBILITY: float = 0.5   # Minimum landmark confidence score to process leg joints
-    SMOOTHING_ALPHA: float = 0.6  # Exponential Moving Average factor (0-1) for angle smoothing
+    UP_THRESHOLD: float = 155.0   # Angle above which user is considered standing (UP)
+    DOWN_THRESHOLD: float = 145.0  # Accessible squat depth threshold for natural squatting
+    MIN_VISIBILITY: float = 0.35  # Minimum landmark confidence score to process leg joints
+    SMOOTHING_ALPHA: float = 0.5  # Exponential Moving Average factor (0-1) for angle smoothing
 
 
 @dataclass
 class PushUpConfig:
     # Elbow angle thresholds (degrees)
-    UP_THRESHOLD: float = 150.0   # Arms extended
-    DOWN_THRESHOLD: float = 110.0  # Arms bent at bottom of push-up
-    # Body posture alignment: shoulder-hip-ankle line angle max deviation from straight line
-    BODY_ALIGNMENT_MAX_ANGLE: float = 40.0 
-    MIN_VISIBILITY: float = 0.5
+    UP_THRESHOLD: float = 145.0   # Arms extended
+    DOWN_THRESHOLD: float = 115.0  # Arms bent at bottom of push-up
+    BODY_ALIGNMENT_MAX_ANGLE: float = 45.0 
+    MIN_VISIBILITY: float = 0.35
     SMOOTHING_ALPHA: float = 0.4
 
 
 @dataclass
 class JumpingJackConfig:
     # Arm angle threshold (degrees between torso-shoulder-wrist vector and vertical)
-    HANDS_OVERHEAD_ANGLE: float = 140.0  # Arms raised overhead (OPEN)
-    HANDS_DOWN_ANGLE: float = 40.0       # Arms at sides (CLOSED)
+    HANDS_OVERHEAD_ANGLE: float = 130.0  # Arms raised overhead (OPEN)
+    HANDS_DOWN_ANGLE: float = 50.0       # Arms at sides (CLOSED)
     # Leg spread ratio: (ankle distance / hip distance)
-    FEET_SPREAD_RATIO_OPEN: float = 1.6  # Feet spread apart in OPEN state
-    FEET_SPREAD_RATIO_CLOSED: float = 1.15  # Feet close together in CLOSED state
-    MIN_VISIBILITY: float = 0.5
+    FEET_SPREAD_RATIO_OPEN: float = 1.4  # Feet spread apart in OPEN state
+    FEET_SPREAD_RATIO_CLOSED: float = 1.2  # Feet close together in CLOSED state
+    MIN_VISIBILITY: float = 0.35
     SMOOTHING_ALPHA: float = 0.3
 
 
