@@ -3,6 +3,7 @@ FitQuest Workout Repository
 Handles persistent storage, retrieval, update, and deletion of workout plans with zero-latency memory cache and async MongoDB synchronization.
 """
 
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, List, Optional
 from backend.src.db.mongo_client import get_db
@@ -13,9 +14,9 @@ DEFAULT_WORKOUT_DICT: Dict[str, Any] = {
     "workout_id": "default-morning-fitness",
     "name": "Grandpa's Daily Motivation",
     "exercises": [
-        {"exercise": "squat", "sets": 3, "reps_per_set": 20, "points_per_rep": 2},
-        {"exercise": "pushup", "sets": 2, "reps_per_set": 10, "points_per_rep": 3},
-        {"exercise": "jumping_jack", "sets": 2, "reps_per_set": 15, "points_per_rep": 2},
+        {"target_id": "ex-default-squat-1", "exercise": "squat", "sets": 3, "reps_per_set": 20, "points_per_rep": 2, "status": "pending"},
+        {"target_id": "ex-default-pushup-1", "exercise": "pushup", "sets": 2, "reps_per_set": 10, "points_per_rep": 3, "status": "pending"},
+        {"target_id": "ex-default-jj-1", "exercise": "jumping_jack", "sets": 2, "reps_per_set": 15, "points_per_rep": 2, "status": "pending"},
     ],
     "target_points": 100,
     "is_active": True,
@@ -32,6 +33,24 @@ class WorkoutRepository:
         self._active_workout_id: str = DEFAULT_WORKOUT_DICT["workout_id"]
         _workout_db_executor.submit(self._load_initial_workouts)
 
+    def _ensure_exercise_ids(self, workout_dict: Dict[str, Any]) -> Dict[str, Any]:
+        """Ensure every exercise in the workout dictionary has a unique target_id."""
+        exercises = workout_dict.get("exercises", [])
+        clean_exercises = []
+        for ex in exercises:
+            if isinstance(ex, dict):
+                tid = ex.get("target_id") or f"ex-{uuid.uuid4().hex[:12]}"
+                clean_exercises.append({
+                    "target_id": tid,
+                    "exercise": str(ex.get("exercise", "squat")).lower().strip(),
+                    "sets": int(ex.get("sets", 2)),
+                    "reps_per_set": int(ex.get("reps_per_set", 10)),
+                    "points_per_rep": int(ex.get("points_per_rep", 2)),
+                    "status": ex.get("status", "pending")
+                })
+        workout_dict["exercises"] = clean_exercises
+        return workout_dict
+
     def _load_initial_workouts(self):
         """Initial background load from MongoDB on startup into RAM cache."""
         try:
@@ -42,7 +61,7 @@ class WorkoutRepository:
                     for d in docs:
                         wid = d.get("workout_id")
                         if wid:
-                            self._in_memory_workouts[wid] = d
+                            self._in_memory_workouts[wid] = self._ensure_exercise_ids(d)
                         if d.get("is_active"):
                             self._active_workout_id = wid
                 else:
@@ -107,7 +126,9 @@ class WorkoutRepository:
         elder_repo.update_profile(
             active_workout_id=workout_id,
             active_workout_name=target.get("name", "Custom Workout"),
-            target_points=target.get("target_points", 100)
+            target_points=target.get("target_points", 100),
+            completed_exercise_ids=[],
+            completed_exercises=[]
         )
 
         _workout_db_executor.submit(self._async_mongo_set_active, workout_id)
@@ -125,12 +146,8 @@ class WorkoutRepository:
             print(f"[WorkoutRepository] Async save notice: {e}")
 
     def create_workout(self, workout_data: Dict[str, Any]) -> Dict[str, Any]:
-        """Insert a new workout template in RAM and dispatch async save."""
-        wid = workout_data.get("workout_id")
-        if not wid:
-            import uuid
-            wid = str(uuid.uuid4())
-            workout_data["workout_id"] = wid
+        """Insert a new workout template with unique exercise target IDs."""
+        wid = workout_data.get("workout_id") or str(uuid.uuid4())
 
         clean_doc = {
             "workout_id": wid,
@@ -139,6 +156,7 @@ class WorkoutRepository:
             "target_points": int(workout_data.get("target_points", 100)),
             "is_active": bool(workout_data.get("is_active", True)),
         }
+        clean_doc = self._ensure_exercise_ids(clean_doc)
 
         if clean_doc["is_active"]:
             self._active_workout_id = wid
@@ -149,7 +167,9 @@ class WorkoutRepository:
             elder_repo.update_profile(
                 active_workout_id=wid,
                 active_workout_name=clean_doc["name"],
-                target_points=clean_doc["target_points"]
+                target_points=clean_doc["target_points"],
+                completed_exercise_ids=[],
+                completed_exercises=[]
             )
 
         self._in_memory_workouts[wid] = dict(clean_doc)
@@ -157,7 +177,7 @@ class WorkoutRepository:
         return clean_doc
 
     def update_workout(self, workout_id: str, update_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        """Update existing workout template in RAM and dispatch async save."""
+        """Update existing workout template in RAM ensuring unique target IDs."""
         existing = self.get_workout(workout_id)
         if not existing:
             return None
@@ -166,6 +186,7 @@ class WorkoutRepository:
             existing["name"] = str(update_data["name"]).strip()
         if "exercises" in update_data and isinstance(update_data["exercises"], list):
             existing["exercises"] = update_data["exercises"]
+            existing = self._ensure_exercise_ids(existing)
         if "target_points" in update_data and update_data["target_points"] is not None:
             existing["target_points"] = max(10, int(update_data["target_points"]))
         if "is_active" in update_data:
@@ -178,7 +199,9 @@ class WorkoutRepository:
             elder_repo.update_profile(
                 active_workout_id=workout_id,
                 active_workout_name=existing.get("name", "Custom Workout"),
-                target_points=existing.get("target_points", 100)
+                target_points=existing.get("target_points", 100),
+                completed_exercise_ids=[],
+                completed_exercises=[]
             )
 
         _workout_db_executor.submit(self._async_mongo_save, dict(existing), existing.get("is_active", False))

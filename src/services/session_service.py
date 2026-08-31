@@ -70,17 +70,17 @@ class SessionService:
 
     def switch_exercise(self, session_id: str, exercise_name: str) -> Optional[WorkoutSession]:
         """
-        Switch the active exercise target in a session to the specified exercise.
+        Switch the active exercise target in a session by target_id or exercise name.
         """
         session = self.get_session(session_id)
         if not session:
             return None
 
-        clean_name = normalize_ex_name(exercise_name)
+        clean_id = exercise_name.lower().strip()
         try:
             new_index = next(
                 i for i, ex in enumerate(session.workout.exercises)
-                if normalize_ex_name(ex.exercise) == clean_name
+                if ex.target_id.lower() == clean_id or normalize_ex_name(ex.exercise) == normalize_ex_name(clean_id)
             )
         except StopIteration:
             return None
@@ -89,8 +89,9 @@ class SessionService:
         session.current_set_index = 0
 
         # Reset model rep tracking for this exercise to allow fresh counting
-        if clean_name in session._last_processed_model_reps:
-            session._last_processed_model_reps[clean_name] = 0
+        clean_ex_name = session.workout.exercises[new_index].exercise
+        if clean_ex_name in session._last_processed_model_reps:
+            session._last_processed_model_reps[clean_ex_name] = 0
 
         # Reset set progress tracker for new exercise set 1
         key = f"{new_index}_0"
@@ -109,32 +110,33 @@ class SessionService:
         """
         session = self.get_session(session_id)
         if not session:
-            all_sessions = self.list_sessions()
-            if all_sessions:
-                session = all_sessions[-1]
-            else:
-                from backend.src.db.workout_repo import workout_repo
-                active_w_dict = workout_repo.get_active_workout()
-                workout = Workout.from_dict(active_w_dict)
-                session = self.start_session(workout)
+            # Create session for active workout automatically
+            from backend.src.db.workout_repo import workout_repo
+            active_w = workout_repo.get_active_workout()
+            session = self.start_session(Workout.from_dict(active_w))
 
-        if not session or session.is_completed:
-            return session
-
-        # Normalize ExerciseResult object or dict
-        if hasattr(result_data, 'to_dict'):
-            payload = result_data.to_dict()
-        elif isinstance(result_data, dict):
-            payload = result_data
+        if isinstance(result_data, dict):
+            raw_ex = result_data.get("exercise", "squat")
+            model_rep_count = int(result_data.get("reps", 0))
         else:
-            raise ValueError(f"Invalid ExerciseResult format: {type(result_data)}")
+            raw_ex = getattr(result_data, "exercise", "squat")
+            model_rep_count = int(getattr(result_data, "reps", 0))
 
-        raw_exercise_name = payload.get("exercise", "")
-        exercise_name = normalize_ex_name(raw_exercise_name)
-        model_rep_count = int(payload.get("reps", 0))
-
-        # Check if the result corresponds to the currently active exercise target
+        exercise_name = normalize_ex_name(raw_ex)
         active_target = session.current_exercise_target
+
+        if not active_target or normalize_ex_name(active_target.exercise) != exercise_name:
+            try:
+                matching_idx = next(
+                    i for i, ex in enumerate(session.workout.exercises)
+                    if normalize_ex_name(ex.exercise) == exercise_name
+                )
+                session.current_exercise_index = matching_idx
+                session.current_set_index = 0
+                active_target = session.current_exercise_target
+            except StopIteration:
+                pass
+
         if not active_target or normalize_ex_name(active_target.exercise) != exercise_name:
             return session
 
@@ -200,7 +202,7 @@ class SessionService:
 
                 # Check if all sets for current exercise are completed
                 if session.current_set_index >= active_target.sets:
-                    elder_repo.mark_exercise_completed(exercise_name)
+                    elder_repo.mark_exercise_completed(exercise_name, getattr(active_target, 'target_id', None))
                     session.current_exercise_index += 1
                     session.current_set_index = 0
 

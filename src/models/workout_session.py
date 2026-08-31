@@ -1,6 +1,6 @@
 """
 FitQuest Workout Session Domain Model
-Represents an active workout session, tracking active exercise, set progression, accumulated score, and target completion status.
+Represents an active workout session, tracking active exercise, set progression, accumulated score, and target completion status with unique target IDs.
 """
 
 import uuid
@@ -84,6 +84,14 @@ class WorkoutSession:
             return "pending"
 
     @property
+    def completed_exercise_ids(self) -> List[str]:
+        """List of target_ids that are completed in this session."""
+        return [
+            ex.target_id for idx, ex in enumerate(self.workout.exercises)
+            if self.get_exercise_status(idx) == "completed"
+        ]
+
+    @property
     def completed_exercises(self) -> List[str]:
         """List of exercise names that are completed in this session."""
         return [
@@ -92,15 +100,22 @@ class WorkoutSession:
         ]
 
     def to_dict(self) -> Dict[str, Any]:
-        """Serialize WorkoutSession state to standard dictionary."""
+        """Serialize WorkoutSession state to standard dictionary with per-exercise statuses."""
         active_target = self.current_exercise_target
         active_progress = self.current_set_progress
+
+        exercise_list = []
+        for idx, ex in enumerate(self.workout.exercises):
+            ex_data = ex.to_dict()
+            ex_data["status"] = self.get_exercise_status(idx)
+            exercise_list.append(ex_data)
 
         return {
             "session_id": self.session_id,
             "workout_id": self.workout.workout_id,
             "workout_name": self.workout.name,
             "current_exercise": active_target.exercise if active_target else None,
+            "current_target_id": active_target.target_id if active_target else None,
             "current_exercise_index": self.current_exercise_index,
             "current_set": (self.current_set_index + 1) if active_target else 0,
             "total_sets_in_exercise": active_target.sets if active_target else 0,
@@ -111,5 +126,7 @@ class WorkoutSession:
             "target_points": self.workout.target_points,
             "target_reached": self.target_reached,
             "is_completed": self.is_completed,
+            "exercises": exercise_list,
+            "completed_exercise_ids": self.completed_exercise_ids,
             "completed_exercises": self.completed_exercises
         }

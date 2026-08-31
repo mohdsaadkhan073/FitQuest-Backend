@@ -1,6 +1,6 @@
 """
 FitQuest Workout Plan Domain Model
-Represents a full workout plan comprising multiple exercise targets and a target point goal.
+Represents a full workout plan comprising multiple exercise targets with unique target IDs.
 """
 
 import uuid
@@ -27,13 +27,41 @@ class Workout:
         if not self.workout_id:
             self.workout_id = str(uuid.uuid4())
 
-    def get_exercise_target(self, exercise_name: str) -> Optional[ExerciseTarget]:
-        """Find ExerciseTarget by exercise name."""
-        clean_name = exercise_name.lower().strip()
+    def get_exercise_target(self, identifier: str) -> Optional[ExerciseTarget]:
+        """Find ExerciseTarget by target_id or exercise name."""
+        clean_id = identifier.lower().strip()
         for target in self.exercises:
-            if target.exercise == clean_name:
+            if target.target_id.lower() == clean_id or target.exercise == clean_id:
                 return target
         return None
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "Workout":
+        """Deserialize Workout from dictionary ensuring each exercise has a unique target_id."""
+        raw_exercises = data.get("exercises", [])
+        exercises = []
+        for ex in raw_exercises:
+            if isinstance(ex, dict):
+                tid = ex.get("target_id") or f"ex-{uuid.uuid4().hex[:12]}"
+                exercises.append(
+                    ExerciseTarget(
+                        target_id=tid,
+                        exercise=ex.get("exercise", "squat"),
+                        sets=int(ex.get("sets", 2)),
+                        reps_per_set=int(ex.get("reps_per_set", 10)),
+                        points_per_rep=int(ex.get("points_per_rep", 2)),
+                        status=ex.get("status", "pending")
+                    )
+                )
+            elif isinstance(ex, ExerciseTarget):
+                exercises.append(ex)
+
+        return cls(
+            workout_id=data.get("workout_id") or str(uuid.uuid4()),
+            name=data.get("name", "Custom Workout"),
+            exercises=exercises,
+            target_points=int(data.get("target_points", 100))
+        )
 
     def to_dict(self) -> Dict[str, Any]:
         """Serialize Workout to standard dictionary."""

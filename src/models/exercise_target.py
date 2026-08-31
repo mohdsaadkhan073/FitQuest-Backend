@@ -1,23 +1,27 @@
 """
 FitQuest Exercise Target Domain Model
-Represents a single exercise target within a workout plan (e.g. 3 sets of 20 squats at 2 points per rep).
+Represents a single exercise target within a workout plan with its own unique primary key ID.
 """
 
+import uuid
 from dataclasses import dataclass, field
 from typing import Any, Dict
 
 
 @dataclass
 class ExerciseTarget:
-    """Target configuration for a specific exercise in a workout."""
+    """Target configuration for a specific exercise in a workout with unique target_id."""
     exercise: str             # Exercise identifier, e.g. "squat", "pushup", "jumping_jack"
     sets: int                 # Required number of sets (e.g., 3)
     reps_per_set: int         # Required repetitions per set (e.g., 20)
     points_per_rep: int = 1   # Points awarded per valid completed repetition (e.g., 2)
+    target_id: str = field(default_factory=lambda: f"ex-{uuid.uuid4().hex[:12]}")  # Unique ID for each exercise item
     status: str = "pending"   # 'pending' | 'in_progress' | 'completed'
 
     def __post_init__(self):
         self.exercise = self.exercise.lower().strip()
+        if not self.target_id:
+            self.target_id = f"ex-{uuid.uuid4().hex[:12]}"
         if self.sets <= 0:
             raise ValueError(f"Sets must be greater than 0, got {self.sets}")
         if self.reps_per_set <= 0:
@@ -38,6 +42,7 @@ class ExerciseTarget:
     def to_dict(self) -> Dict[str, Any]:
         """Serialize ExerciseTarget to standard dictionary."""
         return {
+            "target_id": self.target_id,
             "exercise": self.exercise,
             "sets": self.sets,
             "reps_per_set": self.reps_per_set,

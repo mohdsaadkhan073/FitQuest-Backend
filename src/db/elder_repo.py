@@ -1,7 +1,7 @@
 """
 FitQuest Elder Profile & Points Repository
 Handles persistent storage of elder profile, accumulated points, lifetime score, streak,
-completed exercise state, and automated/custom points reset schedules with in-memory caching and non-blocking background MongoDB writes.
+completed exercise state & target IDs, and automated/custom points reset schedules with in-memory caching and non-blocking background MongoDB writes.
 """
 
 from concurrent.futures import ThreadPoolExecutor
@@ -26,6 +26,7 @@ DEFAULT_ELDER_PROFILE: Dict[str, Any] = {
     "active_workout_id": "default-morning-fitness",
     "active_workout_name": "Grandpa's Daily Motivation",
     "completed_exercises": [],
+    "completed_exercise_ids": [],
 }
 
 
@@ -35,7 +36,6 @@ class ElderRepository:
     def __init__(self):
         self._in_memory_profile: Dict[str, Any] = dict(DEFAULT_ELDER_PROFILE)
         self._is_seeded = False
-        # Dispatch background initial load from MongoDB without blocking module import
         _db_executor.submit(self._load_initial_profile)
 
     def _load_initial_profile(self):
@@ -69,9 +69,7 @@ class ElderRepository:
         _db_executor.submit(self._async_mongo_save, dict(profile))
 
     def _check_and_apply_reset_schedule(self, profile: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Check if points need to be reset based on the configured reset_schedule.
-        """
+        """Check if points need to be reset based on the configured reset_schedule."""
         schedule = profile.get("reset_schedule", "custom").lower()
         if schedule == "custom":
             return profile
@@ -107,6 +105,7 @@ class ElderRepository:
                 profile["last_points_reset_at"] = now.isoformat()
                 profile["reward_unlocked"] = False
                 profile["completed_exercises"] = []
+                profile["completed_exercise_ids"] = []
                 self._save_profile_to_db(profile)
 
         except Exception as e:
@@ -120,6 +119,8 @@ class ElderRepository:
 
         if "completed_exercises" not in profile:
             profile["completed_exercises"] = []
+        if "completed_exercise_ids" not in profile:
+            profile["completed_exercise_ids"] = []
 
         profile = self._check_and_apply_reset_schedule(profile)
         
@@ -137,6 +138,7 @@ class ElderRepository:
         active_workout_id: Optional[str] = None,
         active_workout_name: Optional[str] = None,
         completed_exercises: Optional[List[str]] = None,
+        completed_exercise_ids: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
         """Update elder profile fields and settings in RAM and dispatch async save."""
         profile = self.get_profile()
@@ -155,19 +157,32 @@ class ElderRepository:
             profile["active_workout_name"] = active_workout_name
         if completed_exercises is not None:
             profile["completed_exercises"] = list(set(completed_exercises))
+        if completed_exercise_ids is not None:
+            profile["completed_exercise_ids"] = list(set(completed_exercise_ids))
 
         profile["reward_unlocked"] = (profile["current_points"] >= profile["target_points"])
         self._save_profile_to_db(profile)
         return profile
 
-    def mark_exercise_completed(self, exercise_name: str) -> Dict[str, Any]:
-        """Record an exercise as completed in RAM and dispatch async save."""
+    def mark_exercise_completed(self, exercise_name: str, target_id: Optional[str] = None) -> Dict[str, Any]:
+        """Record an exercise and its unique target_id as completed in RAM."""
         profile = self.get_profile()
         clean_name = exercise_name.lower().strip()
         current_list = profile.get("completed_exercises", [])
+        current_ids = profile.get("completed_exercise_ids", [])
+
+        changed = False
         if clean_name not in current_list:
             current_list.append(clean_name)
             profile["completed_exercises"] = current_list
+            changed = True
+
+        if target_id and target_id not in current_ids:
+            current_ids.append(target_id)
+            profile["completed_exercise_ids"] = current_ids
+            changed = True
+
+        if changed:
             self._save_profile_to_db(profile)
         return profile
 
@@ -191,12 +206,13 @@ class ElderRepository:
         return profile
 
     def reset_points(self) -> Dict[str, Any]:
-        """Manually reset elder current points to 0 in RAM and dispatch async save."""
+        """Manually reset elder current points to 0 and clear completed exercises."""
         profile = self.get_profile()
         profile["current_points"] = 0
         profile["last_points_reset_at"] = datetime.now(timezone.utc).isoformat()
         profile["reward_unlocked"] = False
         profile["completed_exercises"] = []
+        profile["completed_exercise_ids"] = []
         self._save_profile_to_db(profile)
         return profile
 
