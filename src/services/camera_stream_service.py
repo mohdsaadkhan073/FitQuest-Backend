@@ -198,14 +198,8 @@ class CameraStreamService:
                     if all_sessions:
                         active_sess = all_sessions[-1]
                         self._active_session_id = active_sess.session_id
-                    else:
-                        from backend.src.db.workout_repo import workout_repo
-                        from backend.src.models.workout import Workout
-                        active_w = Workout.from_dict(workout_repo.get_active_workout())
-                        active_sess = session_service.start_session(active_w)
-                        self._active_session_id = active_sess.session_id
 
-                if active_sess:
+                if active_sess and not active_sess.is_completed:
                     if active_sess.current_exercise_target:
                         active_ex = normalize_ex_name(active_sess.current_exercise_target.exercise)
                         if self.exercise_manager.active_name != active_ex:

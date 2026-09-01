@@ -42,6 +42,13 @@ class SessionService:
             workout=workout,
             current_points=profile.get("current_points", 0)
         )
+        try:
+            from backend.src.services.camera_stream_service import shared_camera_stream_service
+            if shared_camera_stream_service.exercise_manager:
+                shared_camera_stream_service.exercise_manager.reset_all()
+        except Exception:
+            pass
+
         self._sessions[session.session_id] = session
         return session
 
@@ -109,11 +116,8 @@ class SessionService:
         Process an ExerciseResult from model or manual simulator, update points & history.
         """
         session = self.get_session(session_id)
-        if not session:
-            # Create session for active workout automatically
-            from backend.src.db.workout_repo import workout_repo
-            active_w = workout_repo.get_active_workout()
-            session = self.start_session(Workout.from_dict(active_w))
+        if not session or session.is_completed:
+            return session
 
         if isinstance(result_data, dict):
             raw_ex = result_data.get("exercise", "squat")

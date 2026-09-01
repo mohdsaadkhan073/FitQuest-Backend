@@ -121,17 +121,10 @@ class ElderRepository:
             profile["completed_exercises"] = []
         if "completed_exercise_ids" not in profile:
             profile["completed_exercise_ids"] = []
-
-        profile = self._check_and_apply_reset_schedule(profile)
-        
-        target = profile.get("target_points", 100)
-        curr = profile.get("current_points", 0)
-        # Auto-unlock if points target is met; preserve manual unlock override state
-        if curr >= target and target > 0:
-            profile["reward_unlocked"] = True
-        elif "reward_unlocked" not in profile:
+        if "reward_unlocked" not in profile:
             profile["reward_unlocked"] = False
 
+        profile = self._check_and_apply_reset_schedule(profile)
         return profile
 
     def update_profile(
@@ -144,6 +137,7 @@ class ElderRepository:
         active_workout_name: Optional[str] = None,
         completed_exercises: Optional[List[str]] = None,
         completed_exercise_ids: Optional[List[str]] = None,
+        reward_unlocked: Optional[bool] = None,
     ) -> Dict[str, Any]:
         """Update elder profile fields and settings in RAM and dispatch async save."""
         profile = self.get_profile()
@@ -164,9 +158,8 @@ class ElderRepository:
             profile["completed_exercises"] = list(set(completed_exercises))
         if completed_exercise_ids is not None:
             profile["completed_exercise_ids"] = list(set(completed_exercise_ids))
-
-        if profile.get("current_points", 0) >= profile.get("target_points", 100):
-            profile["reward_unlocked"] = True
+        if reward_unlocked is not None:
+            profile["reward_unlocked"] = bool(reward_unlocked)
 
         self._save_profile_to_db(profile)
         return profile
